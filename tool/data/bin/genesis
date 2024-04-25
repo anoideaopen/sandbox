@@ -1,0 +1,55 @@
+#!/bin/bash
+
+. default
+
+#/data/channel/private/system/configtx.yaml
+#/data/channel/private/example
+process_channel_dir() {
+	dir="$1"	
+	channel="${dir##*/}"
+	namespace="${dir%/*}"
+	namespace="${namespace##*/}"
+
+	if [ -e "$dir/configtx.yaml" ]
+	then
+		src="$dir/configtx.yaml"
+	else
+		src="$CHANNEL_DATA/$namespace/system/configtx.yaml"
+	fi
+
+	dst_dir="$CHANNEL_STATE/$namespace/$channel"
+	dst="$dst_dir/configtx.yaml"
+
+	_equal "$src" "$dst" && return
+	rm -rf "$dst_dir"
+	mkdir -p "$dst_dir"
+	cp -v "$src" "$dst"
+
+	if [ "$channel" = "system" ]
+	then 
+		configtxgen \
+			-configPath "$dst_dir" \
+			-profile "Genesis" \
+			-outputBlock "$dst_dir/genesis.block" \
+			-channelID "$channel"
+	else
+		configtxgen \
+			-configPath "$dst_dir" \
+			-profile "Channel" \
+			-outputCreateChannelTx "$dst_dir/channel.tx" \
+			-channelID "$channel"
+	fi
+
+	if [ "$?" = "0" ]
+	then
+		_copy "$src" "$dst" 
+	else
+		rm -vf "$dst"
+		_err "failed generate transaction '$src'"
+	fi
+}
+
+for dir in $(find "$CHANNEL_DATA" -maxdepth 2 -mindepth 2 -type d)
+do
+	process_channel_dir "$dir"
+done

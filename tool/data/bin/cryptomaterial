@@ -1,0 +1,63 @@
+#!/bin/bash
+
+. default
+
+find_args="-maxdepth 1 -mindepth 1 -type d -print0"
+src="$STATE/cryptogen.yaml"
+dst="$STATE/cryptogen.yaml.generated"
+orgs=""
+peers=""
+orderers=""
+configtxs="$(find "$CHANNEL_DATA" -mindepth 2 -maxdepth 3 -name "configtx.yaml")"
+for configtx in $configtxs
+do
+	orgs="$(_org_by_configtx "$configtx")$orgs"
+	peers="$(_configtx_peer_fqdn "$configtx")$peers"
+	orderers="$(_configtx_orderer_fqdn "$configtx")$orderers"
+done
+
+orgs="$(echo "$orgs"|sort -u)"
+peers="$(echo "$peers"|sort -u)"
+orderers="$(echo "$orderers"|sort -u)"
+
+echo "PeerOrgs:" | tee "$src"
+for org in $orgs
+do
+echo -n "
+  - Name: $org
+    Domain: $org
+    EnableNodeOUs: true
+    Specs:
+"
+	for host in $peers $orderers
+	do
+		[[ "$host" == *".$org" ]] || continue
+echo -n "
+      - Hostname: ${host%.$org}
+        SANS:
+          - localhost
+          - 127.0.0.1
+          - $IP
+          - $HOST
+"
+	done
+echo -n "
+    Users:
+      Count: 2
+"
+done | tee -a "$src"
+
+_equal "$src" "$dst" && exit 0
+
+_info "generating new crypto materials"
+rm -vrf "$STATE/ordererOrganizations" "$STATE/peerOrganizations"
+cryptogen generate --config="$src" --output "$STATE" || _err "failed to generate cryptomaterials"
+
+find "$STATE/peerOrganizations" "$STATE/ordererOrganizations" $find_args | \
+	xargs -0IX find 'X/peers' 'X/orderers' $find_args | \
+	xargs -0IX cp -vr 'X' "$STATE"
+
+if [ "$?" = "0" ]
+then
+	_copy "$src" "$dst"
+fi

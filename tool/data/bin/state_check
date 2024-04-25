@@ -1,0 +1,21 @@
+#!/bin/sh
+
+. default
+
+while true
+do
+    _setup_extra_packages
+    
+    md5sum -c "$STATE_HASH" 2>&1 >/dev/null || break
+
+    find "$DATA" ! -path "$DATA/out/*" > "$STATE_FILE_TMP"
+    if ! _equal "$STATE_FILE_TMP" "$STATE_FILE"
+    then
+        diff "$STATE_FILE_TMP" "$STATE_FILE"
+        mv -v "$STATE_FILE_TMP" "$STATE_FILE"
+        break
+    fi
+    
+    _info "wait $SLEEP_STATE sec. before next check"
+    sleep "$SLEEP_STATE"
+done

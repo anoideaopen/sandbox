@@ -1,0 +1,10 @@
+#!/bin/sh
+
+. default
+
+FROM="$DATA/out"
+TO="$DATA/state"
+
+find "$TO" -maxdepth 2 -mindepth 1 -print0 | xargs rm -vrf
+find "$FROM/connection" -type f -delete
+tar -C "/" --overwrite -vxf "$FROM/backup.tar.gz"

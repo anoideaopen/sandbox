@@ -1,0 +1,13 @@
+#!/bin/sh
+
+. default
+
+for namespace in $(find "$CHANNEL_DATA" -maxdepth 1 -mindepth 1 -type d)
+do
+    prepare="$namespace/.prepare"
+    if [ -r "$prepare" ]
+    then
+        _info "state post hook '$prepare'"
+        . "$prepare"
+    fi
+done

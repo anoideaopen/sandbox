@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -e
+
+step00
+step10
+step20
+step30
+step40; step41
+step50
+step60
+step70
+step80
+step90; step91

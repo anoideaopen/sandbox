@@ -1,0 +1,7 @@
+#!/bin/sh
+
+CUSTOM_CHECK="/state/.custom_check"
+[ -r "$CUSTOM_CHECK" ] && . "$CUSTOM_CHECK"
+
+ifconfig eth0 mtu 1000 up
+wget -T 1 -O - http://localhost:8080/metrics | grep -E 'HELP'

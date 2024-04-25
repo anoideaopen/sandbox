@@ -1,0 +1,28 @@
+#!/bin/bash
+
+. default
+
+help(){
+    echo "
+Usage: $0 [host] [/path/to/script]
+
+Command copy selected shell script to remote host and execute it.
+
+Example:
+    $0 \"peer-004.org1\" \"/data/bin/script_russian_roulette\" 
+    $0 \"peer-001.org1\" \"/data/bin/script_reboot\" 
+    $0 \"peer-002.org1\" \"/data/bin/script_tc_latency\" 
+    $0 \"peer-004.org1\" \"/data/bin/script_tc_bad_network\" 
+
+Host:
+$(ls -1 $STATE|grep -vE 'Organizations|cryptogen|channel'|sed 's/^/  - /g')
+
+Script:
+$(find $DATA -type f -maxdepth 2 -name "script_*"|sed 's/^/  - /g')
+"
+    exit 0
+}
+
+[ -z "$1" -o -z "$2" -o "$1" = "-h" -o "$1" = "--help" ] && help
+
+cp -v "$2" "$STATE/$1/$CUSTOM_CHECK_FILE"

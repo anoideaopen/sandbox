@@ -1,0 +1,65 @@
+#!/bin/sh
+
+TOKEN="/var/lib/grafana/.token"
+OUT="/dev/shm/out"
+DATASOURCE="/var/lib/.datasource"
+DASHBOARD="/data/dashboard"
+MD5SUM="/var/lib/grafana/.md5sum"
+
+which curl || apk add curl
+
+if [ ! -r "$TOKEN" ]
+then
+    curl \
+        -o "$OUT" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d '{
+    "name": "service",
+    "role": "Admin"
+    }' http://admin:test@127.0.0.1:3000/api/auth/keys
+    token="$(cut -d '"' -f 10 "$OUT")"
+    if echo "$token" | grep -qE "[a-zA-Z0-9]+"
+    then
+        echo "$token" > "$TOKEN"
+    else
+        exit 1
+    fi
+fi
+
+if [ ! -r "$DATASOURCE" ]
+then
+    curl \
+        -o "$OUT" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $(cat $TOKEN)" \
+        -d '{
+    "name":"prometheus",
+    "type":"prometheus",
+    "isDefault":true,
+    "url":"http://prometheus:9090",
+    "access":"proxy",
+    "basicAuth":false
+    }' http://127.0.0.1:3000/api/datasources
+    grep -E "already exists|Datasource added" "$OUT" && touch "$DATASOURCE"
+fi
+
+if ! md5sum -c "$MD5SUM"
+then
+    for dashboard in $(find "$DASHBOARD" -type f -name "*.json")
+    do
+        curl \
+            -o "$OUT" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -H "Authorization: Bearer $(cat $TOKEN)" \
+            -T "$dashboard" http://127.0.0.1:3000/api/dashboards/db
+	cat "$OUT"
+        grep -E "success" "$OUT" || exit 1
+    done
+    find "$DASHBOARD" -type f -name "*.json" -exec md5sum '{}' \; > "$MD5SUM"
+fi
+
+wget -T 1 -O - http://localhost:3000/metrics | grep -E 'HELP'

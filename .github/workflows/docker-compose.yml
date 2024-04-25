@@ -1,0 +1,25 @@
+name: docker-compose
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    uses: anoideaopen/workflows/.github/workflows/validate--v1.yml@main
+
+  docker-compose-validate:
+    needs:
+      - validate
+    uses: anoideaopen/workflows/.github/workflows/docker-compose-validate--v1.yml@main
+    #secrets: inherit
+
+  docker-compose-test:
+    needs:
+      - docker-compose-validate
+    uses: anoideaopen/workflows/.github/workflows/docker-compose-test--v1.yml@main
+    #secrets: inherit

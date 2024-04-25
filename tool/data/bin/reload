@@ -1,0 +1,6 @@
+#!/bin/sh
+
+. default
+
+_info "reloading configuration"
+killall sleep

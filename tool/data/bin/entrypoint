@@ -1,0 +1,15 @@
+#!/bin/sh
+
+. default
+
+
+while true
+do
+    if ! steps
+    then
+        echo ""
+        echo "-- ERROR: -----------------------------------"
+        echo ""
+        sleep "$SLEEP_ERROR"
+    fi
+done

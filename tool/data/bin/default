@@ -1,0 +1,239 @@
+#!/bin/sh
+
+VERSION="4.2.0"
+DATA="/data"
+STATE="/state"
+STATE_HASH="$STATE/.hash"
+STATE_FILE="$STATE/.file"
+STATE_FILE_TMP="/tmp/.file"
+CONNECTION_TMP="/tmp/.connection.yaml"
+CHANNEL_DATA="$DATA/channel"
+CHANNEL_STATE="$STATE/channel"
+CONNECTION_STATE="$STATE/connection"
+CONNECTION_DATA="$DATA/out/connection"
+OUT="/dev/shm/out"
+[ -z "$ORDERER_PORT" ] && ORDERER_PORT="7050"
+[ -z "$PEER_PORT" ] && PEER_PORT="7051"
+CRYPTOMATERIAL="${STATE}/peerOrganizations ${STATE}/ordererOrganizations"
+CHAINCODE_TMP="/tmp/chaincode.tar.gz"
+CUSTOM_CHECK_FILE=".custom_check"
+ENV="/state/.env"
+[ -z "$SLEEP_STATE" ] && SLEEP_STATE="30"
+[ -z "$SLEEP_ERROR" ] && SLEEP_ERROR="30"
+
+_err() { # print [message] and exit with error
+    echo "-- ERROR: 'sandbox:$VERSION' $1"
+    exit 1
+}
+
+_info() { # print [message]
+    echo "-- INFO: $1"
+}
+
+_info_and_exit() { # print [message] and exit
+    _info "$1"
+    exit
+}
+
+_setup_extra_packages() { # setup exta package that not included in base image
+    which "openssl" 2>&1 >/dev/null || \
+        apk add --no-cache openssl=~1 || \
+        _err "failed to install openssl"
+
+    if ! which "base58" 2>&1 >/dev/null 
+    then
+        if [ -r "/etc/debian_version" ]
+        then
+            export DEBIAN_FRONTEND="noninteractive"
+            apt-get update
+            apt-get install -y "base58" "python3-setuptools"
+        else
+            apk add --no-cache 'py3-pip>=20'
+            pip3 install base58==2.* || _err "failed to install base58"
+        fi
+    fi
+}
+
+_equal() { # compare if [file1] is equal [file2]
+    [ -r "$1" -o -r "$2" ] || return 1
+    [ "$(cat "$1" | md5sum)" = "$(cat "$2" | md5sum)" ]
+}
+
+_copy() { # copy [file] to [path]
+    cp -fv "$1" "$2"
+}
+
+_configtx_orderer_fqdn_port() { # shows orderer:port fqdns and limit [999] output hosts
+    local limit
+    [ -z "$2" ] && limit="999" || limit="$2"
+    sed -n '/^Orderer:/,/Organizations:/p' "$1" | awk '/- [a-z]+-/ {print $2}' | head -n "$limit"
+}
+
+_configtx_orderer_fqdn() { # shows orderer fqdns and limit [999] output hosts
+    local limit
+    [ -z "$2" ] && limit="999" || limit="$2"
+    _configtx_orderer_fqdn_port "$1" | cut -d ':' -f 1 | head -n "$limit"
+}
+
+_configtx_peer_fqdn() { # shows peer fqdns by [configtx] and limit [999] output hosts
+    local limit
+    [ -z "$2" ] && limit="999" || limit="$2"
+    grep -E "^# peer " "$1" | cut -d " " -f 3 | head -n "$limit"
+}
+
+_configtx_commit_fqdn() { # shows commit peer fqdns by [configtx] and limit [999] output hosts
+    local limit
+    [ -z "$2" ] && limit="999" || limit="$2"
+    grep -E "^# commit " "$1" | cut -d " " -f 3 | head -n "$limit"
+}
+
+_configtx_anchor_peer_by_org() { # list anchor peers from [configtx] by [org] limit [number]
+    local limit
+    [ -z "$3" ] && limit="999" || limit="$3"
+    sed -n '/- &'$2'/,/^$/p' "$1" | \
+        sed -n '/AnchorPeers:/,/^$/p' | \
+        grep "Host: " | tr -d ' ' | cut -d ':' -f 2 | \
+        head -n "$limit"
+}
+
+_org_by_hostname() { # return organisation by [hostname] 
+    echo "${1#*.}"
+}
+
+_org_by_configtx() { # shows organisations by [configtx.yaml] and limit [999] output lines
+    local limit
+    [ -z "$2" ] && limit="999" || limit="$2"
+    grep -E '\sID: '  "$1" | awk '{print $2}' | head -n "$limit"
+}
+
+_crypto_basedir_by_hostname() { # return path to directory with cryptomaterials by [hostname]
+    find $CRYPTOMATERIAL -type d -name "$1" 2>/dev/null \
+        | head -n 1
+}
+
+_crypto_ca_by_hostname() { # returns path to ca certificate by [hostname]
+    echo "$STATE/$1/tls/ca.crt"
+}
+
+_crypto_user_cert_by_org() { # return path by [org] to [user] certificate
+    local user
+    [ -z "$2" ] && user="Admin" || user="$2"
+    find $CRYPTOMATERIAL -type d -name "$1" -print0 2>/dev/null | \
+        xargs -0rI X readlink -f "X/users/$user@$1/tls/client.crt"
+}
+
+_crypto_user_key_by_org() { # return path by [org] to [user] key 
+    local user
+    [ -z "$2" ] && user="Admin" || user="$2"
+    find $CRYPTOMATERIAL -type d -name "$1" -print0 2>/dev/null | \
+        xargs -0rI X readlink -f "X/users/$user@$1/tls/client.key"
+}
+
+_crypto_user_ca_by_org() { # return path by [org] to [user] ca certificat  
+    local user
+    [ -z "$2" ] && user="Admin" || user="$2"
+    find $CRYPTOMATERIAL -type d -name "$1" -print0 2>/dev/null | \
+        xargs -0rI X readlink -f "X/users/$user@$1/tls/ca.crt"
+}
+
+_crypto_user_msp_by_org() { # return path to msp directory by [org] and [user]
+    local user
+    [ -z "$2" ] && user="Admin" || user="$2"
+    find $CRYPTOMATERIAL -type d -name "$1" -print0 2>/dev/null | \
+        xargs -0rI X readlink -f "X/users/$user@$1/msp"
+}
+
+_crypto_msp_by_org() { # return path to msp directory by [org] and [user]
+    _crypto_user_msp_by_org "$1" "$2"
+}
+
+_crypto_admin_cert_by_org() { # return path to Admin certificate by [org]
+    _crypto_user_cert_by_org "$1"
+}
+
+_crypto_admin_key_by_org() { # return path to Admin key by [org]
+    _crypto_user_key_by_org "$1"
+}
+
+_crypto_admin_ca_by_org() { # return path to Admin ca certificat  by [org]
+    _crypto_user_ca_by_org "$1"
+}
+
+_crypto_admin_msp_by_org() { # return path to msp directory for Admin user by [org]
+    _crypto_user_msp_by_org "$1"
+}
+
+_expose_by_hostname() { # return ports that exposed from compose file by [hostname]
+    local search
+    search="${1//[.-]/_}"
+    search="${search#test_}"
+    search="EXP_${search^^}"
+    grep -m 1 "^$search" "$ENV" | cut -d "=" -f 2 | cut -d ":" -f 1
+}
+
+# table of data offsets in the public key by key type
+_tool_ibs() { # return asn1 data offset by [private_key_pem_file]
+    text="$(openssl pkey -in "$1" -text)"
+    if echo "$text" | grep -q "ED25519 Private-Key"
+    then
+        echo "16"
+    elif echo "$text" | grep -q "ED25519"
+    then
+        echo "12"
+    elif echo "$text" | grep -q "P-256"
+    then
+        echo "26"
+    elif echo "$text" | grep -q "RSA Private-Key"
+    then
+        echo "24"
+    else
+        echo "$text"
+        false
+    fi
+}
+
+_tool_private_and_public_keys_base58check() { # generate org0 specific key bundle base64 encode [private_key_pem_file]
+    {
+        openssl pkey -in "$1" -outform DER | dd ibs=16 skip=1
+        openssl pkey -in "$1" -outform DER -pubout | dd ibs=12 skip=1
+    } | base58 -c
+    echo
+} 2> /dev/null
+
+_tool_private_key_base58check() { # generate valid private key in base64 encode [private_key_pem_file]
+    ibs="$(_tool_ibs "$1")" || _err "failed to get offset"
+    openssl pkey -in "$1" -outform DER | \
+        dd ibs="$ibs" skip=1 | \
+        base58 -c
+    echo
+} 2> /dev/null
+
+_tool_validator() { # generate encoded public key (base58->pubkey) by [private_key_pem_file]
+    openssl pkey -in "$1" -pubout -outform DER | \
+        dd ibs="12" skip=1 | \
+        base58
+    echo
+} 2> /dev/null
+
+_tool_address() { # generate org0 specific address (base58check->sha256->pubkey) by [private_key_pem_file]
+    openssl pkey -in "$1" -pubout -outform DER | \
+        dd ibs="12" skip=1 | \
+        openssl dgst -sha3-256 -binary | \
+        base58 -c
+    echo
+} 2> /dev/null
+
+_tool_ski() { # generate SKI by [private_key_pem_file]
+    ibs="$(_tool_ibs "$1")" || _err "failed to get offset"
+    openssl pkey -in "$1" -pubout -outform DER | \
+        dd ibs="$ibs" skip=1 | \
+        openssl dgst -sha256 | \
+        cut -d ' ' -f2
+} 2> /dev/null
+
+_robot_state_dirs() { # shows robot service state directory
+    find "$STATE" -type d -name "robot*" -mindepth 1 -maxdepth 1
+}
+
+_info "$0"
+cd "$WORK" || _err "failed to set work directory"

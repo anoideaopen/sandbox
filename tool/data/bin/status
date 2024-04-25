@@ -1,0 +1,9 @@
+#!/bin/sh
+
+if out="$(ps -elf | grep -E "/step00$")" && [ -r "/state/.hash" ]
+then
+    [ "$1" = "-v" ] && cat "/state/.hash" || echo "ok"
+else
+    [ "$1" = "-v" ] && pstree -p || echo "fail"
+    exit 1
+fi

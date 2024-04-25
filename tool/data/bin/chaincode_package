@@ -1,0 +1,88 @@
+#!/bin/bash
+
+. default
+
+process_go_chaincode() {
+	src="$1"
+	chaincode_dir="${src%/go.mod}"
+	chaincode="${chaincode_dir##*/}"
+	channel_dir="${chaincode_dir%/*}"
+	channel="${channel_dir##*/}"
+	namespace_dir="${channel_dir%/*}"
+	namespace="${namespace_dir##*/}"
+	dst_dir="$CHANNEL_STATE/$namespace/$channel"
+	dst="$dst_dir/$chaincode.tar.gz"
+	sequence_file="$dst.sequence"
+	
+	[ -r "$channel_dir/.prepare" ] && . "$channel_dir/.prepare"
+	[ -r "$chaincode_dir/.prepare" ] && . "$chaincode_dir/.prepare"
+	[ -z "$CHAINCODE_VERSION" ] && _err "fail chaincode version"
+	[ -z "$CHAINCODE_POLICY" ] && _err "fail chaincode policy"
+	[ -n "$CHAINCODE_SEQUENCE" ] && echo "$CHAINCODE_SEQUENCE" > "$sequence_file"
+
+	peer lifecycle chaincode package \
+		"$CHAINCODE_TMP" \
+		--path "$chaincode_dir" \
+		--lang "golang" \
+		--label "${chaincode}_${CHAINCODE_VERSION}"
+	
+	_equal "$CHAINCODE_TMP" "$dst" && return
+	_copy "$CHAINCODE_TMP" "$dst"
+
+	echo "$CHAINCODE_VERSION" > "$dst.version"
+	echo "$CHAINCODE_POLICY" > "$dst.policy"
+
+	if [ -z "$CHAINCODE_INIT" ]
+	then
+		_info "empty init '$chaincode'"
+		rm -f "$dst.init"
+	else
+		echo "$CHAINCODE_INIT" > "$dst.init"
+	fi
+}
+
+process_package() {
+	src="$1"
+	src_no_ext="${src%.tar.gz}"
+	channel_dir="${src%/*}"
+	channel="${channel_dir##*/}"
+	namespace_dir="${channel_dir%/*}"
+	namespace="${namespace_dir##*/}"
+	dst_dir="$CHANNEL_STATE/$namespace/$channel"
+	sequence_file="$dst.sequence"
+	
+	[ -r "$channel_dir/.prepare" ] && . "$channel_dir/.prepare"
+	[ -r "$src.prepare" ] && . "$src.prepare"
+	metadata="$(tar -zxvOf "$src" metadata.json)"
+	version="${metadata##*_}"
+	CHAINCODE_VERSION="${version%\"*}"
+	chaincode="${metadata%%_*}"
+	chaincode="${chaincode##*\"}"
+	dst="$dst_dir/$chaincode.tar.gz"
+	[ -z "$CHAINCODE_POLICY" ] && _err "fail chaincode policy"
+	[ -n "$CHAINCODE_SEQUENCE" ] && echo "$CHAINCODE_SEQUENCE" > "$sequence_file"
+
+	_equal "$src" "$dst" && return
+	_copy "$src" "$dst"
+
+	echo "$CHAINCODE_VERSION" > "$dst.version"
+	echo "$CHAINCODE_POLICY" > "$dst.policy"
+
+	if [ -z "$CHAINCODE_INIT" ]
+	then
+		_info "empty init '$chaincode'"
+		rm -f "$dst.init"
+	else
+		echo "$CHAINCODE_INIT" > "$dst.init"
+	fi
+}
+
+for gomod in $(find "$CHANNEL_DATA" -maxdepth 4 -type f -name "go.mod")
+do
+	process_go_chaincode "$gomod"
+done
+
+for package in $(find "$CHANNEL_DATA" -maxdepth 3 -type f -name "*.tar.gz")
+do
+	process_package "$package"
+done

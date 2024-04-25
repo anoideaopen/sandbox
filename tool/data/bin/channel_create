@@ -1,0 +1,57 @@
+#!/bin/bash
+
+. default
+
+WAIT_CREATE_CHANNEL_RETRY="5"
+
+create_channel() {
+	src="$1"
+	dst="$src.create"
+	src_dir="${src%/channel.tx}"
+	channel="${src_dir##*/}"
+	configtx="$src_dir/configtx.yaml"
+	genesis="$src_dir/channel.block"
+
+	_equal "$src" "$dst" && return
+	for orderer in $(_configtx_orderer_fqdn "$configtx")
+	do
+		for try in 1 2 3 4 5
+		do
+			org="$(_org_by_hostname "$orderer")"
+
+			export CORE_PEER_LOCALMSPID="$org"
+			export CORE_PEER_MSPCONFIGPATH="$(_crypto_admin_msp_by_org "$org")"
+
+			_info "try on:'$orderer' no:' $try' to create channel: '$channel'"
+			peer channel create \
+				-c "$channel" \
+				-f "$src" \
+				--tls \
+				-o "$orderer:$ORDERER_PORT" \
+				--cafile "$(_crypto_ca_by_hostname "$orderer")" \
+				--certfile "$(_crypto_admin_cert_by_org "$org")" \
+				--keyfile "$(_crypto_admin_key_by_org "$org")" \
+				--outputBlock "$genesis" 2>&1 | tee -a "$OUT"
+
+			success="but it is currently at version|\
+Created and started new channel|\
+Received block: 0|\
+Successfully submitted channel update"
+			if grep -qE "$success" "$OUT"
+			then
+				_info "channel: '$channel' created"
+				_copy "$src" "$dst"
+				return
+			else
+				cat "$OUT"
+				sleep "$WAIT_CREATE_CHANNEL_RETRY"
+			fi
+		done
+	done
+	_err "failed to create channel '$src'"
+}
+
+for channeltx in $(find "$CHANNEL_STATE" -type f -name "channel.tx")
+do
+	create_channel "$channeltx"
+done

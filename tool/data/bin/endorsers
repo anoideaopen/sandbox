@@ -1,0 +1,40 @@
+#!/bin/bash
+
+. default
+
+discover_endorsers() {
+  src="$1"
+	chaincode_no_ext="${src%.tar.gz}"
+	chaincode="${chaincode_no_ext##*/}"
+	channel_dir="${src%/*}"
+	channel="${channel_dir##*/}"
+	namespace_dir="${channel_dir%/*}"
+	namespace="${namespace_dir##*/}"
+	configtx="$channel_dir/configtx.yaml"
+  config="/dev/shm/.config"
+
+  for peer in $(_configtx_peer_fqdn "$configtx")
+	do
+    org="$(_org_by_hostname "$peer")"
+		 _info "endorsers for chaincode '$chaincode' in '$namespace' on '$peer'"
+
+    base="$(_crypto_basedir_by_hostname "$peer")"
+    discover saveConfig \
+      --configFile="$config" \
+      --MSP="$org" \
+      --peerTLSCA="$base/tls/ca.crt" \
+      --userKey="$base/msp/keystore/priv_sk" \
+      --userCert="$base/msp/signcerts/$peer-cert.pem"
+
+    discover endorsers \
+      --configFile "$config" \
+      --channel="$channel" \
+      --chaincode="$chaincode" --server="$peer:$PEER_PORT"
+	  _info "------------------------------------------------------"
+	done
+}
+
+for package in $(find "$CHANNEL_STATE" -type f -name "*.tar.gz" | sort -u)
+do
+	discover_endorsers "$package"
+done

@@ -1,0 +1,391 @@
+version: '3.4'
+
+###############################################################################
+x-check: &default-healthcheck
+  healthcheck:
+    test: [ "CMD", "/data/.prepare" ]
+    interval: 5s
+    timeout: 4s
+  deploy:
+    resources:
+      limits:
+        memory: 512M
+      reservations:
+        memory: 16M
+
+###############################################################################
+volumes:
+  tool:
+  docker:
+  prometheus:
+  grafana:
+  # org0
+  orderer-001.org0:
+  orderer-002.org0:
+  peer-001.org0:
+  peer-002.org0:
+  redis:
+  robot-001.org0:
+  postgres:
+  hlf-control-plane.org0:
+  # org1
+  hlf-control-plane.org1:
+  orderer-001.org1:
+  orderer-002.org1:
+  peer-001.org1:
+  peer-002.org1:
+  # org2
+  peer-001.org2:
+
+###############################################################################
+services:
+  dind:
+    image: "${IMG_DIND}"
+    restart: always
+    privileged: true
+    volumes:
+      - ${ORIGIN}/dind/data:/data:rw
+      - ${ORIGIN}/dind/etc/docker/daemon.json:/etc/docker/daemon.json
+      - docker:/run
+    healthcheck:
+      test: [ "CMD", "/data/.prepare" ]
+      interval: 5s
+      timeout: 4s
+    deploy:
+      resources:
+        limits:
+          memory: 4096M
+        reservations:
+          memory: 128M
+
+###############################################################################
+  prometheus:
+    image: "${IMG_PROMETHEUS}"
+    restart: unless-stopped
+    user: root
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "${IP}:${EXP_PROMETHEUS}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - prometheus:/prometheus
+      - ${ORIGIN}/prometheus/data:/data
+      - ${ORIGIN}/prometheus/etc/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    <<: *default-healthcheck
+
+###############################################################################
+  grafana:
+    image: "${IMG_GRAFANA}"
+    restart: unless-stopped
+    user: root
+    depends_on:
+      - prometheus
+    ports:
+        - "${IP}:${EXP_GRAFANA}"
+    volumes:
+      - ${ORIGIN}/grafana/data:/data
+      - ${ORIGIN}/grafana/etc/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - grafana:/var/lib/grafana
+    <<: *default-healthcheck
+
+###############################################################################
+  tool:
+    image: "${IMG_TOOL}"
+    tty: true
+    stdin_open: true
+    depends_on:
+      - dind
+    environment:
+      - IP
+      - SLEEP_STATE
+      - SLEEP_ERROR
+      - SMARTBFT
+      - HOSTPWD=$PWD
+      - HOST=$HOST
+      - CUSTOMPWD=$CUSTOMPWD
+      - FABRIC_LOGGING_SPEC=${TOOL_LOG_LEVEL}
+      - GOPATH=/opt/gopath
+      - CORE_VM_ENDPOINT=unix://docker/docker.sock
+      - PATH=/data/bin:/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    working_dir: /data
+    entrypoint: entrypoint
+    volumes:
+      - tool:/state
+      - .env:/state/.env:ro
+      - ${ORIGIN_DATA}/tool/data:/data
+      - ${ORIGIN}/tool/data/bin:/data/bin:ro
+      - docker:/docker
+      - grafana:/state/grafana
+      - prometheus:/state/prometheus
+      - orderer-001.org0:/state/orderer-001.org0
+      - orderer-002.org0:/state/orderer-002.org0
+      - peer-001.org0:/state/peer-001.org0
+      - peer-002.org0:/state/peer-002.org0
+      - orderer-001.org1:/state/orderer-001.org1
+      - orderer-002.org1:/state/orderer-002.org1
+      - peer-001.org1:/state/peer-001.org1
+      - peer-002.org1:/state/peer-002.org1
+      - peer-001.org2:/state/peer-001.org2
+      - redis:/state/redis
+      - robot-001.org0:/state/robot-001.org0
+      - ./robot-001.org0/etc/config.yaml:/state/robot-001.org0/etc/config.yaml
+      - postgres:/state/postgres
+
+###############################################################################
+  orderer-001.org0:
+    image: "${IMG_ORDERER}"
+    restart: always
+    depends_on:
+      - tool
+    env_file: .env-orderer
+    environment:
+      - ORDERER_GENERAL_LOCALMSPID=org0
+    volumes:
+      - ${ORIGIN}/orderer-001.org0/data:/data
+      - orderer-001.org0:/state
+    ports:
+      - "${IP}:${EXP_ORDERER_001_ORG0}"
+    <<: *default-healthcheck
+
+  orderer-002.org0:
+    image: "${IMG_ORDERER}"
+    restart: always
+    depends_on:
+      - tool
+    env_file: .env-orderer
+    environment:
+      - ORDERER_GENERAL_LOCALMSPID=org0
+    volumes:
+      - ${ORIGIN}/orderer-002.org0/data:/data
+      - orderer-002.org0:/state
+    ports:
+      - "${IP}:${EXP_ORDERER_002_ORG0}"
+    <<: *default-healthcheck
+
+  orderer-001.org1:
+    image: "${IMG_ORDERER}"
+    restart: always
+    depends_on:
+      - tool
+    env_file: .env-orderer
+    environment:
+      - ORDERER_GENERAL_LOCALMSPID=org1
+    volumes:
+      - ${ORIGIN}/orderer-001.org1/data:/data
+      - orderer-001.org1:/state
+    ports:
+      - "${IP}:${EXP_ORDERER_001_ORG1}"
+    <<: *default-healthcheck
+
+  orderer-002.org1:
+    image: "${IMG_ORDERER}"
+    restart: always
+    depends_on:
+      - tool
+    env_file: .env-orderer
+    environment:
+      - ORDERER_GENERAL_LOCALMSPID=org1
+    volumes:
+      - ${ORIGIN}/orderer-002.org1/data:/data
+      - orderer-002.org1:/state
+    ports:
+      - "${IP}:${EXP_ORDERER_002_ORG1}"
+    <<: *default-healthcheck
+
+###############################################################################
+  peer-001.org0:
+    image: "${IMG_PEER}"
+    restart: always
+    env_file:  .env-peer
+    depends_on:
+      - dind
+      - tool
+    environment:
+      - CORE_PEER_ID=peer-001.org0
+      - CORE_PEER_LOCALMSPID=org0
+      - CORE_PEER_ADDRESS=peer-001.org0:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer-001.org0:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer-001.org0:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer-001.org0:6000
+    volumes:
+      - ${ORIGIN}/peer-001.org0/data:/data:rw
+      - peer-001.org0:/state
+      - docker:/docker
+    ports:
+      - "${IP}:${EXP_PEER_001_ORG0}"
+    <<: *default-healthcheck
+
+  peer-002.org0:
+    image: "${IMG_PEER}"
+    restart: always
+    env_file:  .env-peer
+    depends_on:
+      - dind
+      - tool
+    environment:
+      - CORE_PEER_ID=peer-002.org0
+      - CORE_PEER_LOCALMSPID=org0
+      - CORE_PEER_ADDRESS=peer-002.org0:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer-002.org0:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer-002.org0:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer-002.org0:6000
+    volumes:
+      - ${ORIGIN}/peer-002.org0/data:/data:rw
+      - peer-002.org0:/state
+      - docker:/docker
+    ports:
+      - "${IP}:${EXP_PEER_002_ORG0}"
+    <<: *default-healthcheck
+
+  peer-001.org1:
+    image: "${IMG_PEER}"
+    restart: always
+    env_file:  .env-peer
+    depends_on:
+      - dind
+      - tool
+    environment:
+      - CORE_PEER_ID=peer-001.org1
+      - CORE_PEER_LOCALMSPID=org1
+      - CORE_PEER_ADDRESS=peer-001.org1:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer-001.org1:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer-001.org1:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer-001.org1:6000
+    volumes:
+      - ${ORIGIN}/peer-001.org1/data:/data:rw
+      - peer-001.org1:/state
+      - docker:/docker
+    ports:
+      - "${IP}:${EXP_PEER_001_ORG1}"
+    <<: *default-healthcheck
+
+  peer-002.org1:
+    image: "${IMG_PEER}"
+    restart: always
+    env_file:  .env-peer
+    depends_on:
+      - dind
+      - tool
+    environment:
+      - CORE_PEER_ID=peer-002.org1
+      - CORE_PEER_LOCALMSPID=org1
+      - CORE_PEER_ADDRESS=peer-002.org1:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer-002.org1:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer-002.org1:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer-002.org1:6000
+    volumes:
+      - ${ORIGIN}/peer-002.org1/data:/data:rw
+      - peer-002.org1:/state
+      - docker:/docker
+    ports:
+      - "${IP}:${EXP_PEER_002_ORG1}"
+    <<: *default-healthcheck
+
+  peer-001.org2:
+    image: "${IMG_PEER}"
+    restart: always
+    env_file:  .env-peer
+    depends_on:
+      - dind
+      - tool
+    environment:
+      - CORE_PEER_ID=peer-001.org2
+      - CORE_PEER_LOCALMSPID=org2
+      - CORE_PEER_ADDRESS=peer-001.org2:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer-001.org2:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer-001.org2:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer-001.org2:6000
+    volumes:
+      - ${ORIGIN}/peer-001.org2/data:/data:rw
+      - peer-001.org2:/state
+      - docker:/docker
+    ports:
+      - "${IP}:${EXP_PEER_001_ORG2}"
+    <<: *default-healthcheck
+
+###############################################################################
+  redis:
+    image: "${IMG_REDIS}"
+    restart: unless-stopped
+    environment:
+      - REDIS_REPLICATION_MODE=master
+    command: ["redis-server", "--requirepass", "test", "--save", ""]
+    ports:
+        - "${IP}:${EXP_REDIS}"
+    volumes:
+      - redis:/data:rw
+
+###############################################################################
+  robot-001.org0:
+    image: "${IMG_ROBOT}"
+    restart: always
+    environment:
+      - ROBOT_USESMARTBFT=$SMARTBFT
+    depends_on:
+      - tool
+      - redis
+      - peer-001.org0
+      - peer-002.org0
+      - peer-001.org1
+      - peer-002.org1
+      - peer-001.org2
+      - orderer-001.org0
+      - orderer-002.org0
+      - orderer-001.org1
+      - orderer-002.org1
+    user: "root"
+    volumes:
+      - ${ORIGIN}/robot-001.org0/data:/data
+      - ${ORIGIN}/robot-001.org0/etc/config.yaml:/etc/config.yaml:ro
+      - robot-001.org0:/state
+    ports:
+      - "${IP}:${EXP_ROBOT}"
+    <<: *default-healthcheck
+
+###############################################################################
+  postgres:
+    image: "${IMG_POSTGRES}"
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=test
+      - POSTGRES_USER=test
+      - POSTGRES_PASSWORD=test
+    command: ["postgres", "-c", "log_statement=all", "-c", "log_destination=stderr"]
+    ports:
+      - "${IP}:${EXP_POSTGRES}"
+    volumes:
+      - ${ORIGIN}/postgres/data:/data:rw
+      - postgres:/var/lib/postgresql/data:rw
+    <<: *default-healthcheck
+
+###############################################################################
+  hlf-control-plane.org0:
+    image: "${IMG_HLF_CONTROL_PLANE}"
+    restart: unless-stopped
+    user: root
+    volumes:
+      - tool:/state
+      - hlf-control-plane.org0:/state/hlf-control-plane.org0
+      - ${ORIGIN}/hlf-control-plane.org0/etc/config.yaml:/etc/config.yaml:ro
+    ports:
+      - "${IP}:${EXP_HLF_CONTROL_PLANE_API_ORG0}"
+    <<: *default-healthcheck
+
+  hlf-control-plane.org1:
+    image: "${IMG_HLF_CONTROL_PLANE}"
+    restart: unless-stopped
+    user: root
+    volumes:
+      - tool:/state
+      - hlf-control-plane.org1:/state/hlf-control-plane.org0
+      - ${ORIGIN}/hlf-control-plane.org1/etc/config.yaml:/etc/config.yaml:ro
+    ports:
+      - "${IP}:${EXP_HLF_CONTROL_PLANE_API_ORG1}"
+    <<: *default-healthcheck

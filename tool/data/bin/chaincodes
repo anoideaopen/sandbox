@@ -1,0 +1,35 @@
+#!/bin/bash
+
+. default
+
+list_chaincodes() {
+	channel_dir="$1"
+	channel="${channel_dir##*/}"
+	namespace_dir="${channel_dir%/*}"
+	namespace="${namespace_dir##*/}"
+	configtx="$channel_dir/configtx.yaml"
+
+	[ "$channel" = "system" ] && return
+ 	for peer in $(_configtx_peer_fqdn "$configtx")
+	do
+		org="$(_org_by_hostname "$peer")"
+		export CORE_PEER_LOCALMSPID="$org"
+    	export CORE_PEER_ID="$peer"
+    	export CORE_PEER_MSPCONFIGPATH="$(_crypto_admin_msp_by_org "$org")"
+    	export CORE_PEER_TLS_ROOTCERT_FILE="$(_crypto_admin_ca_by_org "$org")"
+		export CORE_PEER_ADDRESS="$peer:$PEER_PORT"
+		export CORE_PEER_TLS_ENABLED="true"
+
+		_info "installed chaincodes in '$namespace' namespace on '$peer'"
+		peer lifecycle chaincode queryinstalled
+		
+		_info "commited chaincodes in '$namespace' namespace on '$peer'"
+		peer lifecycle chaincode querycommitted --channelID "$channel"
+		_info "------------------------------------------------------"
+	done
+}
+
+for channel in $(find "$CHANNEL_STATE" -maxdepth 2 -mindepth 2 -type d)
+do
+	list_chaincodes "$channel"
+done

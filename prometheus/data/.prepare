@@ -1,0 +1,6 @@
+#!/bin/sh
+
+CUSTOM_CHECK="/state/.custom_check"
+[ -r "$CUSTOM_CHECK" ] && . "$CUSTOM_CHECK"
+
+wget -T 1 -O - http://localhost:9090 | grep -E 'doctype html'

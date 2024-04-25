@@ -1,0 +1,13 @@
+#!/bin/sh
+
+once="/tmp/.once"
+
+if [ -r "$once" ]
+then
+	echo "default healthcheck"
+else
+        find /data -type f -name "*.sql" | \
+                sort -n | \
+                xargs -n 1 -IX sh -c 'psql -v ON_ERROR_STOP=1 --username test < X' && touch "$once" | \
+                grep -vE "already exists" | grep "ERROR" && exit 1 || touch "$once"
+fi

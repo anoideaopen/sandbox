@@ -1,0 +1,118 @@
+#!/bin/bash
+
+. default
+
+package_install() {
+    src="$1"
+	hash="$(sha256sum "$src" | cut -c 1-64)"
+	chaincode_no_ext="${src%.tar.gz}"
+	chaincode="${chaincode_no_ext##*/}"
+	channel_dir="${src%/*}"
+	channel="${channel_dir##*/}"
+	namespace_dir="${channel_dir%/*}"
+	namespace="${namespace_dir##*/}"
+	configtx="$channel_dir/configtx.yaml"
+	version="$(cat "$src.version")"
+	policy="$(cat "$src.policy")"
+	sequence_file="$src.sequence"
+	id="${chaincode}_${version}:${hash}"
+	dst_dir="$CHANNEL_STATE/$namespace/$channel"
+	dst="$dst_dir/$chaincode.tar.gz.install"
+
+	_equal "$src" "$dst" && return
+
+	if [ -r "$init" ]
+	then
+		APPROVEFORMYORG="peer lifecycle chaincode approveformyorg"
+		COMMIT="peer lifecycle chaincode commit"
+	else
+		APPROVEFORMYORG="peer lifecycle chaincode approveformyorg --init-required"
+		INIT="$(cat "$src.init")"
+		COMMIT="peer lifecycle chaincode commit --init-required"
+	fi
+
+	err="0"
+	sequence="99999"
+	for peer in $(_configtx_peer_fqdn "$configtx")
+	do
+		org="$(_org_by_hostname "$peer")"
+		export CORE_PEER_LOCALMSPID="$org"
+    	export CORE_PEER_ID="$peer"
+    	export CORE_PEER_MSPCONFIGPATH="$(_crypto_admin_msp_by_org "$org")"
+    	export CORE_PEER_TLS_ROOTCERT_FILE="$(_crypto_admin_ca_by_org "$org")"
+		export CORE_PEER_ADDRESS="$peer:$PEER_PORT"
+		export CORE_PEER_TLS_ENABLED="true"
+
+		_info "install '$chaincode' to '$peer'"
+		peer lifecycle chaincode install "$src"
+		peer lifecycle chaincode queryinstalled 2>&1 | tee "$OUT"
+
+		grep -qE "Package ID: ${chaincode}_${version}:${hash}" "$OUT" || \
+			_err "failed to install '$chaincode' on '$peer'"
+
+		for try in 1 2 3 4 5
+		do
+			_info "try sequence: '$sequence' and  version: '$version'"
+			_info "approvemyorg '$chaincode' to '$peer'"
+			orderer="$(_configtx_orderer_fqdn "$configtx" "1")"
+			$APPROVEFORMYORG \
+				--tls \
+				--cafile "$(_crypto_ca_by_hostname "$orderer")" \
+				--orderer "$orderer:$ORDERER_PORT" \
+				--channelID "$channel" \
+				--name "$chaincode" \
+				--version "$version" \
+				--sequence "$sequence" \
+				--package-id "$id" \
+				--signature-policy "$policy" 2>&1 | tee "$OUT"
+
+			if expected_sequence="$(grep -m 1 -E "Error:.*sequence" "$OUT")"
+			then
+				sequence="${expected_sequence##* sequence }"
+				sequence="${sequence##*number }"
+				echo "-- detect sequence: '$sequence'"
+				continue
+			fi
+			
+			_info "commit '$chaincode' to '$peer'"
+			$COMMIT \
+				--tls \
+				--cafile "$(_crypto_ca_by_hostname "$orderer")" \
+				--orderer "$orderer:$ORDERER_PORT" \
+				--channelID "$channel" \
+				--name "$chaincode" \
+				--version "$version" \
+				--sequence "$sequence" \
+				--signature-policy "$policy" 2>&1 | tee -a "$OUT"
+
+			if grep -E "committed" "$OUT"
+			then
+				break
+			else
+				sleep 1
+				continue
+			fi
+		done
+
+		_info "chaincode querycommitted on '$peer'"
+		peer lifecycle chaincode querycommitted --channelID "$channel" | tee "$OUT"
+		fgrep -q "Name: $chaincode, Version: $version, Sequence: $sequence" "$OUT" || \
+			_err "failed to commit '$chaincode' on '$peer'"
+	done
+
+	# {} - looks like json otherwise ignore step and initialize manually
+	if echo "$INIT" | grep -qE '\{.*\}'
+	then
+		invoke "$namespace" "$channel" "$chaincode" "$INIT" "--isInit" 2>&1 | tee "$OUT"	
+		grep -qE "already initialized|Chaincode invoke successful" "$OUT" || \
+			_err "failed to init chaincode '$chaincode' with '$INIT'"
+	fi
+
+	echo "$((sequence))" > "$sequence_file"
+	_copy "$src" "$dst"
+}
+
+for package in $(find "$CHANNEL_STATE" -type f -name "*.tar.gz" | sort -u)
+do
+	package_install "$package"
+done

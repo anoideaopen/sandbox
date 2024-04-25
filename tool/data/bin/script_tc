@@ -1,0 +1,4 @@
+#!/bin/sh
+
+which tc || apk add iproute2
+rm -f "$CUSTOM_CHECK"

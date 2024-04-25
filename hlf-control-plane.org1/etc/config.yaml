@@ -1,0 +1,20 @@
+---
+logLevel: "warn"
+mspId: org1
+accessToken: "test"
+identity:
+  cert: /state/connection/private/org1/Admin@org1/msp/signcerts/Admin@org1-cert.pem
+  key: /state/connection/private/org1/Admin@org1/msp/keystore/priv_sk
+
+tls:
+  cert: /state/connection/private/org1/Admin@org1/tls/client.crt
+  key: /state/connection/private/org1/Admin@org1/tls/client.key
+  ca: /state/connection/private/org1/Admin@org1/tls/ca.crt
+
+peers:
+  - host: peer-001.org1
+    port: 7051
+
+listen:
+  http: ":8080"
+  grpc: ":8081"

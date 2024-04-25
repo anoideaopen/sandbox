@@ -1,0 +1,31 @@
+#!/bin/bash
+
+. default
+
+orderer_deploy_genesis() {
+    src="$1"
+    dst="$src.orderer"
+    src_dir="${src%/genesis.block}"
+	channel="${src_dir##*/}"
+    configtx="$src_dir/configtx.yaml"
+
+    _equal "$src" "$dst" && return
+
+    err="0"
+    for orderer in $(_configtx_orderer_fqdn "$configtx")
+    do
+        cp -v "$src" "$STATE/$orderer" || err="1"
+    done
+
+    if [ "$err" = "0" ]
+    then
+        _copy "$src" "$dst"
+    else
+        _err "failed to set genesis"
+    fi
+}
+
+for genesis in $(find "$CHANNEL_STATE" -type f -name "genesis.block")
+do
+	orderer_deploy_genesis "$genesis"
+done

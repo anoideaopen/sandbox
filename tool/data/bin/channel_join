@@ -1,0 +1,40 @@
+#!/bin/bash
+
+. default
+
+join_channel() {
+	src="$1"
+	dst="$src.join"
+	src_dir="${src%/channel.block}"
+	channel="${src_dir##*/}"
+	configtx="$src_dir/configtx.yaml"
+
+	_equal "$src" "$dst" && return
+	err="0"
+	for peer in $(_configtx_peer_fqdn "$configtx") $(_configtx_commit_fqdn "$configtx")
+	do
+		_info "join channel '$peer'"
+		org="$(_org_by_hostname "$peer")"
+		export CORE_PEER_LOCALMSPID="$org"
+		export CORE_PEER_ID="$peer"
+		export CORE_PEER_MSPCONFIGPATH="$(_crypto_admin_msp_by_org "$org")"
+		export CORE_PEER_TLS_ROOTCERT_FILE="$(_crypto_admin_ca_by_org "$org")"
+		export CORE_PEER_ADDRESS="$peer:$PEER_PORT"
+		export CORE_PEER_TLS_ENABLED="true"
+
+		peer channel join -b "$src" 2>&1 | tee "$OUT"
+		grep -qE "Successfully submitted proposal|already exists with state" "$OUT" || err="1"
+	done
+
+	if [ "$err" = "0" ]
+	then
+		_copy "$src" "$dst"
+	else
+		_err "failed to create channel '$src'"
+	fi
+}
+
+for channeltx in $(find "$CHANNEL_STATE" -type f -name "channel.block")
+do
+	join_channel "$channeltx"
+done

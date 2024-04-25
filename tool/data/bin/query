@@ -1,0 +1,59 @@
+#!/bin/bash
+
+. default
+
+help() {
+	echo "
+Usage: $0 [namespace<private|public>] [channel] [chaincode] <ctor|list/-l/--list> <peer> <user>
+
+Query a chaincode in selected namespace on a selected peer node.
+
+Example:
+
+$0 public channel1 chaincode1 '{\"Function\":\"Init\", \"Args\":[\"xxx\"]}'
+
+Example peers for chaincode:
+
+$0 public channel1 chaincode1 --list
+"
+	exit 0
+}
+
+[ -z "$4" -o "$1" = "-h" -o "$1" = "--help" ] && help
+
+namespace="$1"
+channel="$2"
+chaincode="$3"
+configtx="$CHANNEL_STATE/$namespace/$channel/configtx.yaml"
+if [ "$4" = "list" -o "$4" = "-l" -o "$4" = "--list" ]
+then
+	_info_and_exit "peers list from '$configtx'
+$(_configtx_peer_fqdn "$configtx")"
+else
+	ctor="$4"
+fi
+peer="$5"
+[ -z "$peer" ] && peer="$(_configtx_peer_fqdn "$configtx" "1")"
+custom_user="$6"
+[ -n "$custom_user" ] && user="$custom_user" || user="Admin"
+
+org="$(_org_by_hostname "$peer")"
+orderer="$(_configtx_orderer_fqdn "$configtx" "1")"
+
+export CORE_PEER_LOCALMSPID="$org"
+export CORE_PEER_MSPCONFIGPATH="$(_crypto_user_msp_by_org "$org" "$user")"
+export CORE_PEER_TLS_ROOTCERT_FILE="$(_crypto_user_ca_by_org "$org" "$user")"
+export CORE_PEER_TLS_ENABLED="true"
+
+QUERY="peer chaincode query \
+--tls \
+--cafile '$(_crypto_ca_by_hostname "$orderer")' \
+--orderer '$orderer:$ORDERER_PORT' \
+--channelID '$channel' \
+--name '$chaincode' \
+--ctor '${ctor}' \
+--peerAddresses '$peer:$PEER_PORT' \
+--tlsRootCertFiles '$(_crypto_ca_by_hostname "$peer")'"
+
+env | grep "CORE_PEER"
+echo "$QUERY" | sh -x

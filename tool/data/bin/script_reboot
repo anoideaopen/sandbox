@@ -1,0 +1,4 @@
+#!/bin/sh
+
+sleep 1 && kill 1 &
+rm -f "$CUSTOM_CHECK"

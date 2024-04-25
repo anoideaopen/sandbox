@@ -1,0 +1,135 @@
+#!/bin/bash
+
+. default
+
+# Lasciate ogni speranza, voi ch'entrate
+# https://medium.com/coinmonks/adding-updating-channel-capabilities-in-hyperledger-fabric-6cb2a1aaea21
+
+anchor_list_json() {
+	local out
+	for peer in $(_configtx_anchor_peer_by_org "$1" "$2")
+	do
+		out="$out,{\"host\": \"$peer\", \"port\": \"$PEER_PORT\"}"
+	done
+	echo "$out" | cut -c2-
+}
+
+set_anchor() {
+	src="$1"
+	src_dir="${src%/channel.tx}"
+	channel="${src_dir##*/}"
+	configtx="$src_dir/configtx.yaml"
+	
+	block_pb="/dev/shm/block.pb"
+	block_json="/dev/shm/block.json"
+	config_json="/dev/shm/config.json"
+	modified_json="/dev/shm/modified.json"
+	original_config_pb="/dev/shm/original_config.pb"
+	modified_config_pb="/dev/shm/modified_config.pb"
+	config_update_pb="/dev/shm/config_update.pb"
+	config_update_json="/dev/shm/config_update_json"
+	config_update_in_envelope_json="/dev/shm/config_update_in_envelope.json"
+	anchor_tx="/dev/shm/anchor.tx"
+
+	for org in $(_org_by_configtx "$configtx")
+	do
+		export CORE_PEER_LOCALMSPID="$org"
+		export CORE_PEER_MSPCONFIGPATH="$(_crypto_admin_msp_by_org "$org")"
+		export CORE_PEER_TLS_ROOTCERT_FILE="$(_crypto_admin_ca_by_org "$org")"
+		export CORE_PEER_TLS_ENABLED="true"
+
+		orderer="$(_configtx_orderer_fqdn "$configtx" "1")"
+
+		_info "'$org' '$channel' fetching config"
+		peer channel fetch config \
+			"$block_pb" \
+			-o "$orderer:$ORDERER_PORT" \
+			-c "$channel" \
+			--tls \
+			--cafile "$(_crypto_ca_by_hostname "$orderer")" || _err "failed fetch config block"
+
+		_info "'$org' '$channel' decoding block"
+		configtxlator proto_decode \
+			--input "$block_pb" \
+			--type common.Block \
+			--output "$block_json"
+
+		_info "'$org' '$channel' reading configuration payload from the decoded block"
+		cat "$block_json" | \
+			jq .data.data[0].payload.data.config > "$config_json"
+
+		_info "'$org' '$channel' adding anchors to the configuration"
+		jq ".channel_group.groups.Application.groups.${org}.values += \
+			{\"AnchorPeers\":\
+				{\"mod_policy\": \"Admins\", \"value\":\
+					{\"anchor_peers\": \
+						[\
+							$(anchor_list_json "$configtx" "$org") \
+						]\
+					},\"version\": \"0\"\
+				}\
+			}" "$config_json" > "$modified_json"
+
+		_info "'$org' '$channel' encoding the original configuration"
+		configtxlator proto_encode \
+			--input "$config_json" \
+			--type common.Config \
+			--output "$original_config_pb" || err="yes"
+
+		_info "'$org' '$channel' encoding modified configuration"
+		configtxlator proto_encode \
+			--input "$modified_json" \
+			--type common.Config \
+			--output "$modified_config_pb" || err="yes"
+
+		_info "'$org' '$channel' computing the difference between original and modified configurations"
+		configtxlator compute_update \
+			--channel_id "$channel" \
+			--original "$original_config_pb" \
+			--updated "$modified_config_pb" \
+			--output "$config_update_pb" 2>&1 | tee "$OUT"
+		grep -qE 'no differences detected' "$OUT" && continue
+		
+		_info "'$org' '$channel' decoding the difference"
+		configtxlator proto_decode \
+			--input "$config_update_pb" \
+			--type common.ConfigUpdate \
+			--output "$config_update_json"
+		
+		_info "'$org' '$channel' envelop the update"
+		echo "
+{
+	\"payload\":{
+		\"header\": {
+			\"channel_header\": {
+				\"channel_id\":\"$channel\", \"type\":2
+			}
+		},
+		\"data\":{
+			\"config_update\":$(cat "$config_update_json")
+		}
+	}
+}" | jq . > "$config_update_in_envelope_json"
+
+		_info "'$org' '$channel' creating the update transaction"
+		configtxlator proto_encode \
+			--input "$config_update_in_envelope_json" \
+			--type common.Envelope \
+			--output "$anchor_tx" || err="yes"
+
+		echo "$channel"
+		_info "'$org' '$channel' sending transaction to '$orderer'"
+		peer channel update \
+			-o "$orderer:$ORDERER_PORT" \
+			-c "$channel" \
+			-f "$anchor_tx" \
+			--tls \
+			--cafile "$(_crypto_ca_by_hostname "$orderer")" 2>&1 | tee "$OUT"
+		grep -qE "Successfully submitted channel" "$OUT" || _err "failed to setup anchor peers"
+	done
+}
+
+for channeltx in $(find "$CHANNEL_STATE" -type f -name "channel.tx")
+do
+	set_anchor "$channeltx"
+done

@@ -1,0 +1,76 @@
+# logger
+logLevel: warn # values: error, warning, info, debug, trace
+logType: lr-txt # values: std, lr-txt, lr-txt-dev, lr-json, lr-json-dev
+
+# Web server port
+# Endpoints:
+# /info    - application info
+# /metrics - prometheus metrics
+# /healthz - liveness probe
+# /readyz  - readiness probe 
+serverPort: 8080
+
+# Fabric
+profilePath: /state/connection/public/org0/User1@org0/connection.yaml
+userName: User1 # Fabric user
+useSmartBFT: true # Use SmartBFT consensus algorithm or Raft consensus algorithm
+
+# Block parser configuration
+txSwapPrefix: swaps # prefix of keys in HLF which store tx swaps
+txMultiSwapPrefix: multi_swap # prefix of keys in HLF which store tx multi swaps
+txPreimagePrefix: batchTransactions # prefix of keys in HLF which store tx preimages
+
+# Robots configuration
+robots: #auto
+  - chName: fiat
+    collectorsBufSize: 1
+    src:
+      - chName: fiat
+        initBlockNum: 1
+      - chName: cc
+        initBlockNum: 1
+      - chName: industrial
+        initBlockNum: 1
+  - chName: cc
+    collectorsBufSize: 1
+    src:
+      - chName: cc
+        initBlockNum: 1
+      - chName: fiat
+        initBlockNum: 1
+  - chName: industrial
+    collectorsBufSize: 1
+    src:
+      - chName: industrial
+        initBlockNum: 1
+      - chName: fiat
+        initBlockNum: 1
+
+# Batch limits
+delayAfterChRobotError: 3s # delay after not unrecoverable channel error before retry run channel miner again
+defaultBatchLimits: # at least one of limits must be filled
+  batchBlocksCountLimit: 10 # max blocks count in batch 
+  batchLenLimit: 1000
+  batchSizeLimit: 100000 # max batch size in bytes
+  batchTimeoutLimit: 300ms # max waiting time before generating a batch
+
+# Robots execute options
+defaultRobotExecOpts:
+  executeTimeout: 0s            # default timeout of sending-executing a batch in the HLF (duration of batchExecute)
+  waitCommitAttempts: 3         # default number of attempts checking that a batch was committed in the HLF
+  waitCommitAttemptTimeout: 15s # default timeout of checking that a batch was committed in the HLF
+
+# Redis configuration
+redisStor:
+  dbPrefix: robot # Redis db prefix
+  addr: # Redis addresses
+    - redis:6379
+  password: test # Redis password
+  withTLS: false # enable TLS for communication with Redis
+
+# Crypto configuration
+CryptoSrc: local
+
+# Prometheus configuration
+promMetrics:
+  prefix: robot_ # Prometheus prefix

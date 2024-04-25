@@ -1,0 +1,15 @@
+#!/bin/sh
+
+. default
+
+bin="$(readlink -f "$0" | xargs dirname)"
+
+echo "Functions:"
+grep -E "^_[a-z]+" "$bin/default" | sed 's/^/  /g;s/(.*#/ -/g'
+
+echo
+
+echo "Scripts:"
+ls -1 "/usr/local/bin" | sed 's/^/  /g'
+ls -1 "$bin" | sed 's/^/  /g'
+echo "  base58"
